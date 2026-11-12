@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The Picture of Dorian Gray</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="page is-landing" id="page">
+    <h1 class="title">The Picture of Dorian Gray</h1>
+
+    <section class="landing" id="landing">
+      <button class="btn btn-primary" id="sit" type="button">Sit for your portrait</button>
+      <input type="file" id="file" accept="image/*" hidden>
+      <p class="privacy">Your photo is sent to Google Gemini to paint your portrait and is never stored.</p>
+    </section>
+
+    <section class="studio" id="studio" hidden>
+      <div class="stage" id="stage">
+        <div class="frame-wrap">
+          <div class="frame">
+            <div class="well" id="well">
+              <img class="portrait" id="portrait" alt="Your portrait">
+              <svg class="slash" id="slash" viewBox="0 0 300 400" preserveAspectRatio="none" aria-hidden="true" hidden></svg>
+            </div>
+          </div>
+          <div class="cloth-clip" aria-hidden="true">
+            <div class="cloth" id="cloth"><div class="cloth-inner"></div></div>
+          </div>
+        </div>
+        <img class="stranger" id="stranger" alt="A withered, loathsome stranger" hidden>
+      </div>
+
+      <p class="narration" id="narration" aria-live="polite"></p>
+
+      <div class="actions">
+        <button class="btn btn-primary" id="next" type="button" hidden></button>
+        <div class="secondary">
+          <button class="btn btn-quiet" id="undo" type="button" hidden>Undo</button>
+          <button class="btn btn-quiet" id="download" type="button" hidden>Download portrait</button>
+          <button class="btn btn-primary" id="restart" type="button" hidden>Start again</button>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
