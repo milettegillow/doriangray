@@ -221,7 +221,7 @@ body::before {
   80% { transform: translate(1px, -1px); }
 }
 
-/* The ruined photo, pinned over the frame's right edge. Mirrored in app.js POLAROID. */
+/* The ruined photo, pinned over the frame's right edge. */
 .polaroid {
   --pw: calc(var(--frame-w) * 0.36);
   position: absolute;

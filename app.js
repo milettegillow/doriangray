@@ -186,16 +186,12 @@ async function runJob(s, key) {
   return preload(await generate(`level-${key}`, input));
 }
 
-/* ---------- Download canvas (mirrors styles.css) ---------- */
+/* ---------- Downloads ---------- */
 
 const FRAME_SRC = 'placeholders/baroque-frame.png';
-const SLASH_SRC = 'placeholders/slash-overlay.png';
 // The frame's transparent opening, as fractions of its width/height (.frame-wrap --op-*).
 const FRAME = { w: 877, h: 1080, l: 0.219, t: 0.176, r: 0.217, b: 0.179, bleed: 0.01 };
-// The pinned polaroid, as fractions of the frame's width/height (desktop .polaroid).
-const POLAROID = { left: 0.8, top: 0.2, width: 0.36, pad: 0.06, padBottom: 0.22, angle: 6 };
 const EXPORT_SCALE = 2;
-const WALL = '#140d08';
 
 function drawCover(ctx, img, x, y, w, h) {
   const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
@@ -204,110 +200,78 @@ function drawCover(ctx, img, x, y, w, h) {
   ctx.drawImage(img, (img.naturalWidth - sw) / 2, (img.naturalHeight - sh) / 2, sw, sh, x, y, w, h);
 }
 
-function polaroidBox(FW, FH) {
-  const w = POLAROID.width * FW;
-  const pad = POLAROID.pad * w;
-  const imgW = w - 2 * pad;
-  const imgH = (imgW * 4) / 3;
-  const h = pad + imgH + POLAROID.padBottom * w;
-  const cx = POLAROID.left * FW + w / 2;
-  const cy = POLAROID.top * FH + h / 2;
-  const a = (POLAROID.angle * Math.PI) / 180;
-  const right = cx + (w / 2) * Math.cos(a) + (h / 2) * Math.sin(a);
-  return { w, h, pad, imgW, imgH, cx, cy, a, right };
+function saveBlob(blob, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
-function drawPolaroid(ctx, p, img) {
-  ctx.save();
-  ctx.translate(p.cx, p.cy);
-  ctx.rotate(p.a);
-
-  ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.6)';
-  ctx.shadowBlur = 26 * EXPORT_SCALE;
-  ctx.shadowOffsetY = 12 * EXPORT_SCALE;
-  ctx.fillStyle = '#f4efe3';
-  ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
-  ctx.restore();
-
-  drawCover(ctx, img, -p.w / 2 + p.pad, -p.h / 2 + p.pad, p.imgW, p.imgH);
-
-  // Brass tack, centred in the top border.
-  const r = p.w * 0.045;
-  const ty = -p.h / 2 - p.w * 0.015 + r;
-  const g = ctx.createRadialGradient(-r * 0.3, ty - r * 0.4, 0, 0, ty, r);
-  g.addColorStop(0, '#fff1c2');
-  g.addColorStop(0.25, '#d6a94a');
-  g.addColorStop(0.6, '#8a5d1c');
-  g.addColorStop(1, '#4a2f0a');
-  ctx.shadowColor = 'rgba(0,0,0,0.55)';
-  ctx.shadowBlur = 3 * EXPORT_SCALE;
-  ctx.shadowOffsetX = 1 * EXPORT_SCALE;
-  ctx.shadowOffsetY = 2 * EXPORT_SCALE;
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.arc(0, ty, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
+function canvasToJpeg(canvas) {
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not encode JPEG'))), 'image/jpeg', 0.92)
+  );
 }
 
-async function downloadPortrait() {
-  const s = session;
-  if (!s) return;
-  const url = s.slashed ? s.images[0] : s.images[s.level];
-  if (!url) return;
-  const [portrait, frame, slash, stranger] = await Promise.all([
-    loadImage(url),
-    loadImage(FRAME_SRC),
-    s.slashed ? loadImage(SLASH_SRC) : null,
-    s.slashed ? loadImage(s.images.slash) : null,
-  ]);
-
-  const FW = FRAME.w * EXPORT_SCALE;
-  const FH = FRAME.h * EXPORT_SCALE;
-  const pol = s.slashed ? polaroidBox(FW, FH) : null;
-  const W = pol ? Math.ceil(pol.right + 40 * EXPORT_SCALE) : FW;
+// Before the slash: the current portrait in the frame.
+async function downloadFramed(s) {
+  const [portrait, frame] = await Promise.all([loadImage(s.images[s.level]), loadImage(FRAME_SRC)]);
+  const W = FRAME.w * EXPORT_SCALE;
+  const H = FRAME.h * EXPORT_SCALE;
 
   const canvas = document.createElement('canvas');
   canvas.width = W;
-  canvas.height = FH;
+  canvas.height = H;
   const ctx = canvas.getContext('2d');
 
-  ctx.fillStyle = WALL;
-  ctx.fillRect(0, 0, W, FH);
+  ctx.fillStyle = '#140d08';
+  ctx.fillRect(0, 0, W, H);
 
-  const ox = FW * (FRAME.l - FRAME.bleed);
-  const oy = FH * (FRAME.t - FRAME.bleed);
-  const ow = FW * (1 - FRAME.l - FRAME.r + 2 * FRAME.bleed);
-  const oh = FH * (1 - FRAME.t - FRAME.b + 2 * FRAME.bleed);
+  const ox = W * (FRAME.l - FRAME.bleed);
+  const oy = H * (FRAME.t - FRAME.bleed);
+  const ow = W * (1 - FRAME.l - FRAME.r + 2 * FRAME.bleed);
+  const oh = H * (1 - FRAME.t - FRAME.b + 2 * FRAME.bleed);
   ctx.fillStyle = '#120b06';
   ctx.fillRect(ox, oy, ow, oh);
   drawCover(ctx, portrait, ox, oy, ow, oh);
-  if (slash) ctx.drawImage(slash, ox, oy, ow, oh);
 
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.75)';
   ctx.shadowBlur = 26 * EXPORT_SCALE;
   ctx.shadowOffsetY = 22 * EXPORT_SCALE;
-  ctx.drawImage(frame, 0, 0, FW, FH);
+  ctx.drawImage(frame, 0, 0, W, H);
   ctx.restore();
 
-  if (pol) drawPolaroid(ctx, pol, stranger);
+  saveBlob(await canvasToJpeg(canvas), `dorian-gray-portrait-${s.level}.jpg`);
+}
 
-  canvas.toBlob(
-    (blob) => {
-      if (!blob) return;
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = s.slashed ? 'dorian-gray-slashed.jpg' : `dorian-gray-portrait-${s.level}.jpg`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    },
-    'image/jpeg',
-    0.92
-  );
+// After the slash: just the ruined photo, at full resolution.
+async function downloadRuined(s) {
+  const url = s.images.slash;
+  const blob = await (await fetch(url)).blob();
+  if (blob.type === 'image/jpeg') {
+    saveBlob(blob, 'dorian-gray-ruined.jpg');
+    return;
+  }
+  const img = await loadImage(url);
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext('2d').drawImage(img, 0, 0);
+  saveBlob(await canvasToJpeg(canvas), 'dorian-gray-ruined.jpg');
+}
+
+async function downloadPortrait() {
+  const s = session;
+  if (!s) return;
+  if (s.slashed) {
+    if (s.images.slash) await downloadRuined(s);
+  } else if (s.images[s.level]) {
+    await downloadFramed(s);
+  }
 }
 
 /* ---------- View ---------- */
