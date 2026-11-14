@@ -32,7 +32,7 @@ async function generate(step, inputImageDataUrl) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.image) {
     const err = new Error(`generate("${step}") ${data.error || 'failed'} (${res.status})`);
-    err.refused = res.status === 422;
+    err.code = data.error || 'failed'; // refused | limit | closed | failed
     throw err;
   }
   return data.image;
@@ -42,6 +42,12 @@ async function generate(step, inputImageDataUrl) {
 
 const PAINTING_TEXT = 'The painter is at work…';
 const UNCHANGED_TEXT = 'The portrait will not change.';
+const REFUSED_TEXT = 'The painter refuses. Try another photo.';
+// Errors with no way forward: shown without a retry.
+const BLOCKED_TEXT = {
+  limit: 'The painter will see no more of you today.',
+  closed: 'The painter has gone home.',
+};
 const RETRY_LABEL = 'Try again';
 const PORTRAIT_NARRATION = 'The portrait is finished. It is the most beautiful thing you have ever seen. You would give your soul for it to grow old instead of you.';
 
@@ -88,6 +94,7 @@ const el = {
   landing: $('landing'),
   studio: $('studio'),
   sit: $('sit'),
+  privacy: $('privacy'),
   refusal: $('refusal'),
   file: $('file'),
   frameWrap: $('frame-wrap'),
@@ -154,7 +161,8 @@ let session = null;
 
 function newSession(photo) {
   // stuck: the level (1–4, or 5 for the slash) whose reveal failed, awaiting "Try again".
-  return { photo, jobs: {}, images: {}, level: 0, slashed: false, busy: false, stuck: null };
+  // blocked: hit the daily limit or the painter has closed; no further sins.
+  return { photo, jobs: {}, images: {}, level: 0, slashed: false, busy: false, stuck: null, blocked: false };
 }
 
 function ensure(s, key) {
@@ -321,7 +329,7 @@ function renderActions() {
   const s = session;
   const showing = !!s && !s.busy && s.images[0] !== undefined;
   const stuck = showing && s.stuck !== null;
-  const canSin = showing && !s.slashed && !stuck;
+  const canSin = showing && !s.slashed && !stuck && !s.blocked;
 
   el.next.hidden = !(canSin || stuck);
   if (stuck) el.next.textContent = RETRY_LABEL;
@@ -344,8 +352,12 @@ async function liftCloth() {
 
 /* ---------- Flow ---------- */
 
-function showLanding(refused = false) {
-  el.refusal.hidden = !refused;
+// message: shown above the button; blocked: no button, as there is no way forward.
+function showLanding(message = null, blocked = false) {
+  el.refusal.textContent = message || '';
+  el.refusal.hidden = !message;
+  el.sit.hidden = blocked;
+  el.privacy.hidden = blocked;
   el.page.classList.add('is-landing');
   el.landing.hidden = false;
   el.studio.hidden = true;
@@ -357,7 +369,7 @@ function showStudio() {
   el.studio.hidden = false;
 }
 
-function reset(refused = false) {
+function reset(message = null, blocked = false) {
   session = null;
   el.file.value = '';
   el.cloth.classList.remove('down');
@@ -369,7 +381,7 @@ function reset(refused = false) {
   hideNarration();
   el.narration.textContent = '';
   renderActions();
-  showLanding(refused);
+  showLanding(message, blocked);
   window.scrollTo({ top: 0 });
 }
 
@@ -400,7 +412,9 @@ async function sitForPortrait(file) {
     paintAhead(s);
   } catch (err) {
     console.error(err);
-    if (s === session) reset(true);
+    if (s !== session) return;
+    const blocked = BLOCKED_TEXT[err.code];
+    reset(blocked || REFUSED_TEXT, !!blocked);
   }
 }
 
@@ -445,6 +459,16 @@ async function reveal(s, target) {
   } catch (err) {
     console.error(err);
     if (s !== session) return;
+    const blocked = BLOCKED_TEXT[err.code];
+    if (blocked) {
+      s.blocked = true;
+      setNarration(blocked);
+      await liftCloth();
+      if (s !== session) return;
+      s.busy = false;
+      renderActions();
+      return;
+    }
     s.stuck = target;
     s.busy = false;
     setNarration(UNCHANGED_TEXT);

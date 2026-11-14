@@ -30,6 +30,48 @@ function send(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+/* ---------- Rate limit (Upstash Redis REST) ---------- */
+
+const DAILY_LIMIT = 30;
+const WINDOW_SECONDS = 24 * 60 * 60;
+
+async function redis(url, token, command) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(command),
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!r.ok) throw new Error(`Redis HTTP ${r.status}`);
+  return (await r.json()).result;
+}
+
+function visitorIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  const first = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0].trim();
+  return first || req.socket?.remoteAddress || 'unknown';
+}
+
+// True when this visitor has used up today's generations. Without Redis
+// configured (local dev) there is no limit; if Redis is unreachable, let the
+// request through rather than lock everyone out.
+async function overLimit(req) {
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return false;
+  try {
+    const key = `gen:${visitorIp(req)}`;
+    const count = await redis(url, token, ['INCR', key]);
+    if (count === 1) await redis(url, token, ['EXPIRE', key, WINDOW_SECONDS]);
+    return count > DAILY_LIMIT;
+  } catch (err) {
+    console.error(`rate limit check failed: ${err?.message ?? 'Error'}`);
+    return false;
+  }
+}
+
+/* ---------- Handler ---------- */
+
 async function readBody(req) {
   // Vercel pre-parses JSON into req.body; the local dev server does too,
   // but fall back to reading the stream in case neither did.
@@ -47,6 +89,8 @@ export default async function handler(req, res) {
   }
 
   try {
+    if (await overLimit(req)) return send(res, 429, { error: 'limit' });
+
     const { step, image } = await readBody(req);
     const prompt = PROMPTS[step];
     const match = typeof image === 'string' && image.match(DATA_URL);
@@ -79,6 +123,10 @@ export default async function handler(req, res) {
     if (!upstream.ok) {
       // Log status only server-side; never forward upstream bodies to the client.
       console.error(`Gemini ${step}: HTTP ${upstream.status}`);
+      const body = upstream.status === 429 ? await upstream.text().catch(() => '') : '';
+      if (upstream.status === 402 || body.includes('RESOURCE_EXHAUSTED')) {
+        return send(res, 503, { error: 'closed' });
+      }
       return send(res, 502, { error: 'failed' });
     }
 
