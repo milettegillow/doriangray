@@ -328,6 +328,7 @@ function renderActions() {
   else if (canSin) el.next.textContent = s.level < 4 ? SINS[s.level + 1].label : SLASH.label;
   el.undo.hidden = !(canSin && s.level >= 1);
   el.download.hidden = !showing || stuck;
+  el.download.textContent = showing && s.slashed ? 'Download the stranger' : 'Download portrait';
   el.restart.hidden = !(showing && s.slashed);
 }
 
