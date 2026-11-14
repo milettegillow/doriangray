@@ -110,6 +110,10 @@ body::before {
   box-shadow: inset 0 0 0 3px rgba(17, 11, 7, 0.9), inset 0 0 0 4px rgba(227, 196, 126, 0.3);
 }
 
+.btn-secondary {
+  background: transparent;
+}
+
 .btn-quiet {
   font-size: 1rem;
   padding: 8px 18px;
@@ -295,19 +299,27 @@ body::before {
   margin-top: 28px;
 }
 
-.secondary {
+/* Main action and download side by side; they wrap to full-width rows,
+   main action on top, when there isn't room for both. */
+.action-row {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 10px;
+  align-items: stretch;
+  gap: 16px;
+  width: 100%;
+  max-width: 420px;
 }
+
+.action-row .btn { flex: 1 1 auto; }
 
 /* Desktop: frame on the left, narration and buttons on the right, all in one viewport.
    The column gap clears the polaroid, which overhangs the frame's right edge by ~25%. */
 @media (min-width: 900px) {
   :root {
     --frame-h: min(82vh, calc(100vh - 128px));
-    --frame-w: min(calc(var(--frame-h) * 877 / 1080), calc((100vw - 560px) / 1.27));
+    /* Group = frame + polaroid gap + 440px panel, capped at 1200px wide. */
+    --frame-w: min(calc(var(--frame-h) * 877 / 1080), calc((min(100vw - 64px, 1200px) - 472px) / 1.27));
   }
 
   .page:not(.is-landing) {
@@ -324,6 +336,8 @@ body::before {
   .studio {
     flex: 1;
     min-height: 0;
+    max-width: 1200px;
+    margin-inline: auto;
     flex-direction: row;
     justify-content: center;
     align-items: center;
@@ -344,17 +358,17 @@ body::before {
   }
 
   .actions { align-items: flex-start; }
-  /* Pull the quiet buttons' padding back so their text lines up with the narration. */
-  .secondary { justify-content: flex-start; margin-left: -18px; }
+  .action-row { justify-content: flex-start; flex-wrap: nowrap; width: max-content; max-width: none; }
+  .action-row .btn { flex: none; padding-inline: 22px; }
+  /* Pull Undo's padding back so its text lines up with the narration. */
+  .btn-quiet { margin-left: -18px; }
 }
 
 @media (max-width: 720px) {
   body { font-size: 17px; }
   .polaroid { --pw: calc(var(--frame-w) * 0.28); left: 70%; top: 62%; }
   .narration { font-size: 1.08rem; margin-top: 36px; }
-  .secondary { flex-direction: column; align-items: center; }
-  .btn { width: min(320px, 100%); }
-  .btn-quiet { width: auto; }
+  .landing .btn { width: min(320px, 100%); }
 }
 
 @media (prefers-reduced-motion: reduce) {
