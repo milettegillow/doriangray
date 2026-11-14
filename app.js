@@ -73,8 +73,10 @@ const SLASH = {
 /* ---------- Timing ---------- */
 
 const REDUCED_MOTION = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-const CLOTH_DROP_MS = REDUCED_MOTION ? 300 : 1400;
-const CLOTH_LIFT_MS = REDUCED_MOTION ? 300 : 1600;
+const CLOTH_DROP_MS = REDUCED_MOTION ? 300 : 900;
+const CLOTH_LIFT_MS = REDUCED_MOTION ? 300 : 1100;
+const SLASH_WIPE_MS = 350;
+const POLAROID_DELAY_MS = 1000;
 const NARRATION_HOLD_MS = 4000;
 const NARRATION_FADE_MS = 800;
 
@@ -88,10 +90,11 @@ const el = {
   sit: $('sit'),
   refusal: $('refusal'),
   file: $('file'),
-  stage: $('stage'),
+  frameWrap: $('frame-wrap'),
   portrait: $('portrait'),
   slash: $('slash'),
   cloth: $('cloth'),
+  polaroid: $('polaroid'),
   stranger: $('stranger'),
   narration: $('narration'),
   next: $('next'),
@@ -183,158 +186,16 @@ async function runJob(s, key) {
   return preload(await generate(`level-${key}`, input));
 }
 
-/* ---------- Slash overlay geometry (shared by SVG and download canvas) ---------- */
+/* ---------- Download canvas (mirrors styles.css) ---------- */
 
-function mulberry32(seed) {
-  return function () {
-    seed |= 0;
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-// Coordinates are in a 300 × 400 box matching the 3:4 canvas.
-const SLASH_LAYERS = (function buildSlash() {
-  const rand = mulberry32(1890);
-  const A = { x: 58, y: 34 };
-  const C = { x: 190, y: 160 };
-  const B = { x: 250, y: 372 };
-  const N = 54;
-  const pts = [];
-
-  for (let i = 0; i <= N; i++) {
-    const t = i / N;
-    const u = 1 - t;
-    const x = u * u * A.x + 2 * u * t * C.x + t * t * B.x;
-    const y = u * u * A.y + 2 * u * t * C.y + t * t * B.y;
-    const dx = 2 * u * (C.x - A.x) + 2 * t * (B.x - C.x);
-    const dy = 2 * u * (C.y - A.y) + 2 * t * (B.y - C.y);
-    const len = Math.hypot(dx, dy);
-    const nx = -dy / len;
-    const ny = dx / len;
-    const base = 15 * Math.pow(Math.sin(Math.PI * t), 0.6);
-    const tip = i === 0 || i === N;
-    // Ragged, independently torn sides with occasional sharp snags.
-    const jag = () => (rand() - 0.5) * 3.2 + (rand() < 0.18 ? (rand() - 0.3) * 6 : 0);
-    const wl = tip ? 0 : Math.max(0.4, base * (0.8 + rand() * 0.35) + jag());
-    const wr = tip ? 0 : Math.max(0.4, base * (0.8 + rand() * 0.35) + jag());
-    const cl = tip ? 0 : Math.min(wl * 0.7, 1.5 + rand() * 4.5);
-    const cr = tip ? 0 : Math.min(wr * 0.7, 1.5 + rand() * 4.5);
-    pts.push({ x, y, nx, ny, wl, wr, cl, cr });
-  }
-
-  const f = (n) => n.toFixed(1);
-  const side = (sign, off) =>
-    pts.map((p) => {
-      const w = (sign > 0 ? p.wl : p.wr) + off(p);
-      return [p.x + p.nx * sign * w, p.y + p.ny * sign * w];
-    });
-  const poly = (a, b) => {
-    const all = a.concat(b.slice().reverse());
-    return 'M' + all.map(([x, y]) => `${f(x)} ${f(y)}`).join(' L') + ' Z';
-  };
-  const line = (a) => 'M' + a.map(([x, y]) => `${f(x)} ${f(y)}`).join(' L');
-
-  const L0 = side(1, () => 0);
-  const R0 = side(-1, () => 0);
-  const Lcurl = side(1, (p) => -p.cl);
-  const Rcurl = side(-1, (p) => -p.cr);
-
-  let threads = '';
-  for (let i = 6; i < N - 6; i += 5 + Math.floor(rand() * 5)) {
-    const j = i + Math.floor(rand() * 3) - 1;
-    threads += `M${f(Lcurl[i][0])} ${f(Lcurl[i][1])} Q${f(pts[i].x + (rand() - 0.5) * 6)} ${f(pts[i].y + (rand() - 0.5) * 6)} ${f(Rcurl[j][0])} ${f(Rcurl[j][1])} `;
-  }
-
-  const linen = (dark) => ({
-    x1: A.x, y1: A.y, x2: B.x, y2: B.y,
-    stops: dark
-      ? [[0, '#8a7655'], [0.5, '#5f4f36'], [1, '#7d6a4c']]
-      : [[0, '#cbb991'], [0.45, '#a38f68'], [1, '#bba67e']],
-  });
-
-  return [
-    { d: poly(side(1, () => 5), side(-1, () => 5)), fill: 'rgba(0,0,0,0.6)', blur: 2.4 },
-    { d: poly(side(1, () => 1.4), side(-1, () => 1.4)), fill: 'rgba(255,226,170,0.22)' },
-    { d: poly(L0, R0), fill: { x1: A.x, y1: A.y, x2: B.x, y2: B.y, stops: [[0, '#1d110a'], [0.5, '#050201'], [1, '#170b05']] } },
-    { d: poly(L0, Lcurl), fill: linen(false) },
-    { d: poly(R0, Rcurl), fill: linen(true) },
-    { d: line(Lcurl) + ' ' + line(Rcurl), stroke: 'rgba(30,14,4,0.6)', width: 0.7 },
-    { d: threads, stroke: 'rgba(214,195,152,0.7)', width: 0.45 },
-  ];
-})();
-
-function renderSlashSvg() {
-  const defs = [];
-  const paths = SLASH_LAYERS.map((layer, i) => {
-    let fill = 'none';
-    if (typeof layer.fill === 'string') fill = layer.fill;
-    else if (layer.fill) {
-      const g = layer.fill;
-      defs.push(
-        `<linearGradient id="slash-g${i}" gradientUnits="userSpaceOnUse" x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}">` +
-          g.stops.map(([o, c]) => `<stop offset="${o}" stop-color="${c}"/>`).join('') +
-          '</linearGradient>'
-      );
-      fill = `url(#slash-g${i})`;
-    }
-    if (layer.blur) {
-      defs.push(`<filter id="slash-f${i}" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="${layer.blur}"/></filter>`);
-    }
-    const stroke = layer.stroke ? ` stroke="${layer.stroke}" stroke-width="${layer.width}" stroke-linecap="round"` : '';
-    const filter = layer.blur ? ` filter="url(#slash-f${i})"` : '';
-    return `<path d="${layer.d}" fill="${fill}"${stroke}${filter}/>`;
-  });
-  el.slash.innerHTML = `<defs>${defs.join('')}</defs>${paths.join('')}`;
-}
-
-function drawSlash(ctx, x, y, w, h) {
-  const sx = w / 300;
-  const sy = h / 400;
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(sx, sy);
-  for (const layer of SLASH_LAYERS) {
-    const path = new Path2D(layer.d);
-    ctx.filter = layer.blur ? `blur(${layer.blur * sx}px)` : 'none';
-    if (layer.fill) {
-      if (typeof layer.fill === 'string') ctx.fillStyle = layer.fill;
-      else {
-        const g = layer.fill;
-        const grad = ctx.createLinearGradient(g.x1, g.y1, g.x2, g.y2);
-        g.stops.forEach(([o, c]) => grad.addColorStop(o, c));
-        ctx.fillStyle = grad;
-      }
-      ctx.fill(path);
-    }
-    if (layer.stroke) {
-      ctx.strokeStyle = layer.stroke;
-      ctx.lineWidth = layer.width;
-      ctx.lineCap = 'round';
-      ctx.stroke(path);
-    }
-  }
-  ctx.restore();
-}
-
-/* ---------- Download canvas (frame mirrors styles.css) ---------- */
-
-const FRAME_CSS_PX = 30; // --fw in styles.css
-const FRAME_RINGS = [ // [from, to] in CSS px inward from the outer edge
-  [0, 2, 'rgba(255,245,200,0.7)'],
-  [2, 5, '#6b440e'],
-  [5, 9, '#e8c766'],
-  [9, 11, '#7a4f12'],
-];
-const SIGHT_RINGS = [ // [from, to] in CSS px outward from the picture edge
-  [0, 2, '#3a2405'],
-  [2, 5, '#d9b45a'],
-  [5, 7, '#5a3a0a'],
-  [7, 8, 'rgba(255,240,190,0.4)'],
-];
-const ROSETTE = [[0, 2, '#fff4c0'], [3, 5, '#e9c560'], [6, 7, '#7a4f12'], [8, 10, '#f1d47a'], [11, 12, '#5c3a0a']];
+const FRAME_SRC = 'placeholders/baroque-frame.png';
+const SLASH_SRC = 'placeholders/slash-overlay.png';
+// The frame's transparent opening, as fractions of its width/height (.frame-wrap --op-*).
+const FRAME = { w: 877, h: 1080, l: 0.219, t: 0.176, r: 0.217, b: 0.179, bleed: 0.01 };
+// The pinned polaroid, as fractions of the frame's width/height (desktop .polaroid).
+const POLAROID = { left: 0.8, top: 0.2, width: 0.36, pad: 0.06, padBottom: 0.22, angle: 6 };
+const EXPORT_SCALE = 2;
+const WALL = '#140d08';
 
 function drawCover(ctx, img, x, y, w, h) {
   const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
@@ -343,80 +204,51 @@ function drawCover(ctx, img, x, y, w, h) {
   ctx.drawImage(img, (img.naturalWidth - sw) / 2, (img.naturalHeight - sh) / 2, sw, sh, x, y, w, h);
 }
 
-function ringRect(ctx, x, y, w, h, from, to, color) {
-  ctx.strokeStyle = color;
-  ctx.lineWidth = to - from;
-  const m = from + (to - from) / 2;
-  ctx.strokeRect(x + m, y + m, w - 2 * m, h - 2 * m);
+function polaroidBox(FW, FH) {
+  const w = POLAROID.width * FW;
+  const pad = POLAROID.pad * w;
+  const imgW = w - 2 * pad;
+  const imgH = (imgW * 4) / 3;
+  const h = pad + imgH + POLAROID.padBottom * w;
+  const cx = POLAROID.left * FW + w / 2;
+  const cy = POLAROID.top * FH + h / 2;
+  const a = (POLAROID.angle * Math.PI) / 180;
+  const right = cx + (w / 2) * Math.cos(a) + (h / 2) * Math.sin(a);
+  return { w, h, pad, imgW, imgH, cx, cy, a, right };
 }
 
-function drawFrame(ctx, W, H, k) {
-  const sheen = ctx.createLinearGradient(0, 0, W, H);
-  [[0, '#f3d77c'], [0.22, '#a97726'], [0.45, '#f6e39a'], [0.68, '#8a5c18'], [0.88, '#e8c466'], [1, '#9b6b20']]
-    .forEach(([o, c]) => sheen.addColorStop(o, c));
-  ctx.fillStyle = sheen;
-  ctx.fillRect(0, 0, W, H);
-
-  for (const [a, b, c] of FRAME_RINGS) ringRect(ctx, 0, 0, W, H, a * k, b * k, c);
-  ringRect(ctx, 0, 0, W, H, 0, k * 0.6, '#2b1a04');
-
-  // Rope moulding between 13 and 18 CSS px.
-  const r0 = 13 * k;
-  const r1 = 18 * k;
+function drawPolaroid(ctx, p, img) {
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(r0, r0, W - 2 * r0, H - 2 * r0);
-  ctx.rect(r1, r1, W - 2 * r1, H - 2 * r1);
-  ctx.clip('evenodd');
-  const period = 6 * k * Math.SQRT2;
-  const band = [['#fbe7a1', 0], ['#c99a3c', 2], ['#6d470f', 4]];
-  for (let s = -H; s < W + H; s += period) {
-    for (const [color, off] of band) {
-      const o = off * k * Math.SQRT2;
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(s + o, 0);
-      ctx.lineTo(s + o + period / 3, 0);
-      ctx.lineTo(s + o + period / 3 + H, H);
-      ctx.lineTo(s + o + H, H);
-      ctx.closePath();
-      ctx.fill();
-    }
-  }
+  ctx.translate(p.cx, p.cy);
+  ctx.rotate(p.a);
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.6)';
+  ctx.shadowBlur = 26 * EXPORT_SCALE;
+  ctx.shadowOffsetY = 12 * EXPORT_SCALE;
+  ctx.fillStyle = '#f4efe3';
+  ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
   ctx.restore();
 
-  // Corner rosettes centred 15.5 CSS px in from each corner.
-  const c = 15.5 * k;
-  const R = 12.5 * k;
-  for (const [cx, cy] of [[c, c], [W - c, c], [c, H - c], [W - c, H - c]]) {
-    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
-    for (const [a, b, col] of ROSETTE) {
-      g.addColorStop((a * k) / R, col);
-      g.addColorStop((b * k) / R, col);
-    }
-    g.addColorStop((12 * k) / R, '#5c3a0a');
-    g.addColorStop(1, 'rgba(92,58,10,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(cx, cy, R, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
+  drawCover(ctx, img, -p.w / 2 + p.pad, -p.h / 2 + p.pad, p.imgW, p.imgH);
 
-function drawInnerShadow(ctx, x, y, w, h, size) {
-  const edges = [
-    [x, y, x, y + size, [x, y, w, size]],
-    [x, y + h, x, y + h - size, [x, y + h - size, w, size]],
-    [x, y, x + size, y, [x, y, size, h]],
-    [x + w, y, x + w - size, y, [x + w - size, y, size, h]],
-  ];
-  for (const [x1, y1, x2, y2, rect] of edges) {
-    const g = ctx.createLinearGradient(x1, y1, x2, y2);
-    g.addColorStop(0, 'rgba(0,0,0,0.5)');
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(...rect);
-  }
+  // Brass tack, centred in the top border.
+  const r = p.w * 0.045;
+  const ty = -p.h / 2 - p.w * 0.015 + r;
+  const g = ctx.createRadialGradient(-r * 0.3, ty - r * 0.4, 0, 0, ty, r);
+  g.addColorStop(0, '#fff1c2');
+  g.addColorStop(0.25, '#d6a94a');
+  g.addColorStop(0.6, '#8a5d1c');
+  g.addColorStop(1, '#4a2f0a');
+  ctx.shadowColor = 'rgba(0,0,0,0.55)';
+  ctx.shadowBlur = 3 * EXPORT_SCALE;
+  ctx.shadowOffsetX = 1 * EXPORT_SCALE;
+  ctx.shadowOffsetY = 2 * EXPORT_SCALE;
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(0, ty, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 async function downloadPortrait() {
@@ -424,36 +256,43 @@ async function downloadPortrait() {
   if (!s) return;
   const url = s.slashed ? s.images[0] : s.images[s.level];
   if (!url) return;
-  const img = await loadImage(url);
+  const [portrait, frame, slash, stranger] = await Promise.all([
+    loadImage(url),
+    loadImage(FRAME_SRC),
+    s.slashed ? loadImage(SLASH_SRC) : null,
+    s.slashed ? loadImage(s.images.slash) : null,
+  ]);
 
-  const PW = 900;
-  const PH = 1200;
-  const k = 3.2;
-  const B = FRAME_CSS_PX * k;
-  const W = PW + 2 * B;
-  const H = PH + 2 * B;
+  const FW = FRAME.w * EXPORT_SCALE;
+  const FH = FRAME.h * EXPORT_SCALE;
+  const pol = s.slashed ? polaroidBox(FW, FH) : null;
+  const W = pol ? Math.ceil(pol.right + 40 * EXPORT_SCALE) : FW;
 
   const canvas = document.createElement('canvas');
   canvas.width = W;
-  canvas.height = H;
+  canvas.height = FH;
   const ctx = canvas.getContext('2d');
 
-  drawFrame(ctx, W, H, k);
+  ctx.fillStyle = WALL;
+  ctx.fillRect(0, 0, W, FH);
+
+  const ox = FW * (FRAME.l - FRAME.bleed);
+  const oy = FH * (FRAME.t - FRAME.bleed);
+  const ow = FW * (1 - FRAME.l - FRAME.r + 2 * FRAME.bleed);
+  const oh = FH * (1 - FRAME.t - FRAME.b + 2 * FRAME.bleed);
+  ctx.fillStyle = '#120b06';
+  ctx.fillRect(ox, oy, ow, oh);
+  drawCover(ctx, portrait, ox, oy, ow, oh);
+  if (slash) ctx.drawImage(slash, ox, oy, ow, oh);
 
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(B, B, PW, PH);
-  ctx.clip();
-  ctx.fillStyle = '#120b06';
-  ctx.fillRect(B, B, PW, PH);
-  drawCover(ctx, img, B, B, PW, PH);
-  drawInnerShadow(ctx, B, B, PW, PH, 28 * k);
-  if (s.slashed) drawSlash(ctx, B, B, PW, PH);
+  ctx.shadowColor = 'rgba(0,0,0,0.75)';
+  ctx.shadowBlur = 26 * EXPORT_SCALE;
+  ctx.shadowOffsetY = 22 * EXPORT_SCALE;
+  ctx.drawImage(frame, 0, 0, FW, FH);
   ctx.restore();
 
-  for (const [a, b, c] of SIGHT_RINGS) {
-    ringRect(ctx, B - b * k, B - b * k, PW + 2 * b * k, PH + 2 * b * k, 0, (b - a) * k, c);
-  }
+  if (pol) drawPolaroid(ctx, pol, stranger);
 
   canvas.toBlob(
     (blob) => {
@@ -558,10 +397,9 @@ function reset(refused = false) {
   el.file.value = '';
   el.cloth.classList.remove('down');
   setPortrait(null);
-  el.slash.setAttribute('hidden', '');
-  el.stage.classList.remove('is-slashed');
-  el.stranger.classList.remove('shown');
-  el.stranger.hidden = true;
+  el.slash.classList.remove('cut');
+  el.frameWrap.classList.remove('shake');
+  el.polaroid.classList.remove('shown');
   el.stranger.removeAttribute('src');
   hideNarration();
   el.narration.textContent = '';
@@ -653,10 +491,7 @@ async function reveal(s, target) {
   if (isSlash) {
     s.slashed = true;
     setPortrait(s.images[0]);
-    el.slash.removeAttribute('hidden'); // SVG elements have no .hidden property
-    el.stage.classList.add('is-slashed');
     el.stranger.src = s.images.slash;
-    el.stranger.hidden = false;
   } else {
     s.level = target;
     setPortrait(s.images[target]);
@@ -665,9 +500,23 @@ async function reveal(s, target) {
 
   await liftCloth();
   if (s !== session) return;
-  if (isSlash) el.stranger.classList.add('shown');
+  if (isSlash) {
+    await cutPortrait();
+    if (s !== session) return;
+  }
   s.busy = false;
   renderActions();
+}
+
+// The knife stroke: wipe the slash across the canvas, shake the frame,
+// then the ruined photo drops in, pinned over the frame.
+async function cutPortrait() {
+  el.slash.classList.add('cut');
+  el.frameWrap.classList.add('shake');
+  await sleep(SLASH_WIPE_MS);
+  el.frameWrap.classList.remove('shake');
+  await sleep(POLAROID_DELAY_MS - SLASH_WIPE_MS);
+  el.polaroid.classList.add('shown');
 }
 
 async function undo() {
@@ -680,8 +529,6 @@ async function undo() {
 }
 
 /* ---------- Wiring ---------- */
-
-renderSlashSvg();
 
 el.sit.addEventListener('click', () => el.file.click());
 el.file.addEventListener('change', () => sitForPortrait(el.file.files[0]));
