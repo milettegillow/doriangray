@@ -1,0 +1,8 @@
+{
+  "name": "doriangray",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file=.env.local dev-server.js"
+  }
+}

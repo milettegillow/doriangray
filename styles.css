@@ -84,6 +84,8 @@ body::before {
 
 .privacy { margin: 0; font-size: 1rem; color: var(--body); }
 
+.refusal { margin: 0; font-size: 1.15rem; color: var(--body); }
+
 /* Buttons */
 .btn {
   font-family: "Playfair Display", Georgia, serif;

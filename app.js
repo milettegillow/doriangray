@@ -1,7 +1,7 @@
 'use strict';
 
-// Placeholder mode: generate() returns local images after a short delay.
-const MOCK = true;
+// Placeholder mode (add ?mock to the URL): generate() returns local images after a short delay.
+const MOCK = new URLSearchParams(location.search).has('mock');
 
 const MOCK_DELAY_MS = 2000;
 const PLACEHOLDERS = {
@@ -24,14 +24,25 @@ async function generate(step, inputImageDataUrl) {
     await sleep(MOCK_DELAY_MS);
     return PLACEHOLDERS[step];
   }
-  // Real mode: send inputImageDataUrl and this step's prompt to Gemini
-  // (through a server endpoint that holds the API key) and return the result.
-  throw new Error(`No real generator for "${step}" yet`);
+  const res = await fetch('/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ step, image: inputImageDataUrl }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.image) {
+    const err = new Error(`generate("${step}") ${data.error || 'failed'} (${res.status})`);
+    err.refused = res.status === 422;
+    throw err;
+  }
+  return data.image;
 }
 
 /* ---------- Copy ---------- */
 
 const PAINTING_TEXT = 'The painter is at work…';
+const UNCHANGED_TEXT = 'The portrait will not change.';
+const RETRY_LABEL = 'Try again';
 const PORTRAIT_NARRATION = 'The portrait is finished. It is the most beautiful thing you have ever seen. You would give your soul for it to grow old instead of you.';
 
 const SINS = [
@@ -75,6 +86,7 @@ const el = {
   landing: $('landing'),
   studio: $('studio'),
   sit: $('sit'),
+  refusal: $('refusal'),
   file: $('file'),
   stage: $('stage'),
   portrait: $('portrait'),
@@ -108,29 +120,22 @@ async function preload(url) {
   return url;
 }
 
-async function toDataUrl(url) {
-  if (url.startsWith('data:')) return url;
-  const blob = await (await fetch(url)).blob();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
+// Re-encode any image as a JPEG data URL, at most `max` px on the long side,
+// so requests stay well under Vercel's body limit.
+async function toJpegDataUrl(url, max = 1024, quality = 0.85) {
+  const img = await loadImage(url);
+  const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.naturalWidth * scale);
+  canvas.height = Math.round(img.naturalHeight * scale);
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', quality);
 }
 
-// Downscale the upload so it is a sensible size to send for generation.
 async function preparePhoto(file) {
   const objectUrl = URL.createObjectURL(file);
   try {
-    const img = await loadImage(objectUrl);
-    const MAX = 1600;
-    const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(img.naturalWidth * scale);
-    canvas.height = Math.round(img.naturalHeight * scale);
-    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/jpeg', 0.9);
+    return await toJpegDataUrl(objectUrl);
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
@@ -145,7 +150,8 @@ async function preparePhoto(file) {
 let session = null;
 
 function newSession(photo) {
-  return { photo, jobs: {}, images: {}, level: 0, slashed: false, busy: false };
+  // stuck: the level (1–4, or 5 for the slash) whose reveal failed, awaiting "Try again".
+  return { photo, jobs: {}, images: {}, level: 0, slashed: false, busy: false, stuck: null };
 }
 
 function ensure(s, key) {
@@ -160,13 +166,20 @@ function ensure(s, key) {
   return s.jobs[key];
 }
 
+// Paint every later stage in the background, in order. Safe to call again:
+// finished jobs are cached, and anything that failed is started afresh.
+function paintAhead(s) {
+  ensure(s, 4).catch((err) => console.error(err));
+  ensure(s, 'slash').catch((err) => console.error(err));
+}
+
 async function runJob(s, key) {
   if (key === 0) return preload(await generate('portrait', s.photo));
   if (key === 'slash') {
     await ensure(s, 4).catch(() => {}); // queue behind the levels
     return preload(await generate('slash', s.photo));
   }
-  const input = await toDataUrl(await ensure(s, key - 1));
+  const input = await toJpegDataUrl(await ensure(s, key - 1));
   return preload(await generate(`level-${key}`, input));
 }
 
@@ -504,12 +517,14 @@ async function crossfadePortrait(url) {
 function renderActions() {
   const s = session;
   const showing = !!s && !s.busy && s.images[0] !== undefined;
-  const canSin = showing && !s.slashed;
+  const stuck = showing && s.stuck !== null;
+  const canSin = showing && !s.slashed && !stuck;
 
-  el.next.hidden = !canSin;
-  if (canSin) el.next.textContent = s.level < 4 ? SINS[s.level + 1].label : SLASH.label;
+  el.next.hidden = !(canSin || stuck);
+  if (stuck) el.next.textContent = RETRY_LABEL;
+  else if (canSin) el.next.textContent = s.level < 4 ? SINS[s.level + 1].label : SLASH.label;
   el.undo.hidden = !(canSin && s.level >= 1);
-  el.download.hidden = !showing;
+  el.download.hidden = !showing || stuck;
   el.restart.hidden = !(showing && s.slashed);
 }
 
@@ -525,7 +540,8 @@ async function liftCloth() {
 
 /* ---------- Flow ---------- */
 
-function showLanding() {
+function showLanding(refused = false) {
+  el.refusal.hidden = !refused;
   el.page.classList.add('is-landing');
   el.landing.hidden = false;
   el.studio.hidden = true;
@@ -537,7 +553,7 @@ function showStudio() {
   el.studio.hidden = false;
 }
 
-function reset() {
+function reset(refused = false) {
   session = null;
   el.file.value = '';
   el.cloth.classList.remove('down');
@@ -550,7 +566,7 @@ function reset() {
   hideNarration();
   el.narration.textContent = '';
   renderActions();
-  showLanding();
+  showLanding(refused);
   window.scrollTo({ top: 0 });
 }
 
@@ -566,6 +582,7 @@ async function sitForPortrait(file) {
   }
 
   const s = (session = newSession(photo));
+  el.refusal.hidden = true;
   showStudio();
   setPortrait(null);
   renderActions();
@@ -577,27 +594,46 @@ async function sitForPortrait(file) {
     setPortrait(url);
     setNarration(PORTRAIT_NARRATION);
     renderActions();
-    // Paint every later stage in the background, in order.
-    ensure(s, 'slash').catch((err) => console.error(err));
+    paintAhead(s);
   } catch (err) {
     console.error(err);
-    if (s === session) reset();
+    if (s === session) reset(true);
   }
 }
 
 async function commitNext() {
   const s = session;
-  if (!s || s.busy || s.slashed) return;
+  if (!s || s.busy) return;
+  if (s.stuck !== null) return retryStep();
+  if (s.slashed) return;
   const target = s.level + 1;
-  const isSlash = target > 4;
-  const ready = isSlash ? Promise.all([ensure(s, 0), ensure(s, 'slash')]) : ensure(s, target);
-  ready.catch(() => {});
 
   s.busy = true;
   renderActions();
   hideNarration();
   await dropCloth();
   if (s !== session) return;
+  await reveal(s, target);
+}
+
+// Retry only the step that failed; the cloth is still down.
+async function retryStep() {
+  const s = session;
+  const target = s.stuck;
+  s.stuck = null;
+  s.busy = true;
+  renderActions();
+  hideNarration();
+  await sleep(NARRATION_FADE_MS);
+  if (s !== session) return;
+  await reveal(s, target);
+}
+
+// With the cloth down: narrate, wait for the image, then lift to reveal it.
+async function reveal(s, target) {
+  const isSlash = target > 4;
+  const ready = isSlash ? Promise.all([ensure(s, 0), ensure(s, 'slash')]) : ensure(s, target);
+  ready.catch(() => {});
 
   setNarration(isSlash ? SLASH.narration : SINS[target].narration);
 
@@ -606,9 +642,9 @@ async function commitNext() {
   } catch (err) {
     console.error(err);
     if (s !== session) return;
-    setNarration(narrationFor(s.level));
-    await liftCloth();
+    s.stuck = target;
     s.busy = false;
+    setNarration(UNCHANGED_TEXT);
     renderActions();
     return;
   }
@@ -624,6 +660,7 @@ async function commitNext() {
   } else {
     s.level = target;
     setPortrait(s.images[target]);
+    paintAhead(s); // picks the chain up again if an earlier failure broke it
   }
 
   await liftCloth();
