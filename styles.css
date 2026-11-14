@@ -264,7 +264,13 @@ body::before {
   box-shadow: 1px 2px 3px rgba(0, 0, 0, 0.55);
 }
 
-/* Narration */
+/* Narration and buttons */
+.panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
 .narration {
   max-width: 34em;
   min-height: 1.6em;
@@ -294,6 +300,52 @@ body::before {
   flex-wrap: wrap;
   justify-content: center;
   gap: 10px;
+}
+
+/* Desktop: frame on the left, narration and buttons on the right, all in one viewport.
+   The column gap clears the polaroid, which overhangs the frame's right edge by ~25%. */
+@media (min-width: 900px) {
+  :root {
+    --frame-h: min(82vh, calc(100vh - 128px));
+    --frame-w: min(calc(var(--frame-h) * 877 / 1080), calc((100vw - 560px) / 1.27));
+  }
+
+  .page:not(.is-landing) {
+    height: 100vh;
+    min-height: 0;
+    padding: 24px 32px;
+  }
+
+  .page:not(.is-landing) .title {
+    font-size: 2rem;
+    margin-bottom: 16px;
+  }
+
+  .studio {
+    flex: 1;
+    min-height: 0;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    gap: calc(var(--frame-w) * 0.27 + 32px);
+  }
+
+  .stage { width: auto; }
+
+  .panel {
+    width: 440px;
+    flex: none;
+    align-items: flex-start;
+  }
+
+  .narration {
+    margin: 0;
+    text-align: left;
+  }
+
+  .actions { align-items: flex-start; }
+  /* Pull the quiet buttons' padding back so their text lines up with the narration. */
+  .secondary { justify-content: flex-start; margin-left: -18px; }
 }
 
 @media (max-width: 720px) {
