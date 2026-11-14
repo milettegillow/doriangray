@@ -196,18 +196,6 @@ async function runJob(s, key) {
 
 /* ---------- Downloads ---------- */
 
-const FRAME_SRC = 'placeholders/baroque-frame.png';
-// The frame's transparent opening, as fractions of its width/height (.frame-wrap --op-*).
-const FRAME = { w: 877, h: 1080, l: 0.219, t: 0.176, r: 0.217, b: 0.179, bleed: 0.01 };
-const EXPORT_SCALE = 2;
-
-function drawCover(ctx, img, x, y, w, h) {
-  const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
-  const sw = w / scale;
-  const sh = h / scale;
-  ctx.drawImage(img, (img.naturalWidth - sw) / 2, (img.naturalHeight - sh) / 2, sw, sh, x, y, w, h);
-}
-
 function saveBlob(blob, filename) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -218,50 +206,12 @@ function saveBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
-function canvasToJpeg(canvas) {
-  return new Promise((resolve, reject) =>
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not encode JPEG'))), 'image/jpeg', 0.92)
-  );
-}
-
-// Before the slash: the current portrait in the frame.
-async function downloadFramed(s) {
-  const [portrait, frame] = await Promise.all([loadImage(s.images[s.level]), loadImage(FRAME_SRC)]);
-  const W = FRAME.w * EXPORT_SCALE;
-  const H = FRAME.h * EXPORT_SCALE;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = H;
-  const ctx = canvas.getContext('2d');
-
-  ctx.fillStyle = '#140d08';
-  ctx.fillRect(0, 0, W, H);
-
-  const ox = W * (FRAME.l - FRAME.bleed);
-  const oy = H * (FRAME.t - FRAME.bleed);
-  const ow = W * (1 - FRAME.l - FRAME.r + 2 * FRAME.bleed);
-  const oh = H * (1 - FRAME.t - FRAME.b + 2 * FRAME.bleed);
-  ctx.fillStyle = '#120b06';
-  ctx.fillRect(ox, oy, ow, oh);
-  drawCover(ctx, portrait, ox, oy, ow, oh);
-
-  ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.75)';
-  ctx.shadowBlur = 26 * EXPORT_SCALE;
-  ctx.shadowOffsetY = 22 * EXPORT_SCALE;
-  ctx.drawImage(frame, 0, 0, W, H);
-  ctx.restore();
-
-  saveBlob(await canvasToJpeg(canvas), `dorian-gray-portrait-${s.level}.jpg`);
-}
-
-// After the slash: just the ruined photo, at full resolution.
-async function downloadRuined(s) {
-  const url = s.images.slash;
+// Save an image exactly as generated, at full resolution. JPEGs are saved
+// byte for byte; anything else is re-encoded as a JPEG at its natural size.
+async function saveAsJpeg(url, filename) {
   const blob = await (await fetch(url)).blob();
   if (blob.type === 'image/jpeg') {
-    saveBlob(blob, 'dorian-gray-ruined.jpg');
+    saveBlob(blob, filename);
     return;
   }
   const img = await loadImage(url);
@@ -269,16 +219,20 @@ async function downloadRuined(s) {
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   canvas.getContext('2d').drawImage(img, 0, 0);
-  saveBlob(await canvasToJpeg(canvas), 'dorian-gray-ruined.jpg');
+  const jpeg = await new Promise((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not encode JPEG'))), 'image/jpeg', 0.92)
+  );
+  saveBlob(jpeg, filename);
 }
 
+// Before the slash: the current portrait. After it: the ruined photo.
 async function downloadPortrait() {
   const s = session;
   if (!s) return;
   if (s.slashed) {
-    if (s.images.slash) await downloadRuined(s);
+    if (s.images.slash) await saveAsJpeg(s.images.slash, 'dorian-gray-ruined.jpg');
   } else if (s.images[s.level]) {
-    await downloadFramed(s);
+    await saveAsJpeg(s.images[s.level], `dorian-gray-portrait-${s.level}.jpg`);
   }
 }
 

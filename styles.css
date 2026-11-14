@@ -141,7 +141,7 @@ body::before {
 }
 
 /* Frame component: frame.png on top, portrait in its transparent opening.
-   Opening edges (from baroque-frame.png, 877 × 1080): mirrored in app.js FRAME. */
+   Opening edges measured from baroque-frame.png (877 × 1080). */
 .frame-wrap {
   --op-l: 21.9%;
   --op-t: 17.6%;
